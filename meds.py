@@ -1,3 +1,6 @@
+# marser for the MEDS format
+# MEDS described at https://www.nodc.noaa.gov/GTSPP/document/datafmt/medsfmt.html
+
 class MEDSProfile(object):
 	'''
 	text: MEDS string (one per line in data files)
@@ -80,7 +83,7 @@ class MEDSProfile(object):
 	 	}
 	 	self.history_offset = 42
 
-	 	self.profile_header_format = {
+	 	self.profile_segment_header_format = {
 	 		'MKey': [8,0,str],
 	 		'One_Deg_sq': [8,8,str],
 	 		'Cruise_ID': [10,16,int],
@@ -95,7 +98,7 @@ class MEDSProfile(object):
 	 		'No_Depths': [4,58, int],
 	 		'D_P_Code': [1,62,str]
 	 	}
-	 	self.profile_header_offset = 63
+	 	self.profile_segment_header_offset = 63
 
 	 	self.level_format = {
 	 		'Depth_Press': [6,0,float],
@@ -105,7 +108,9 @@ class MEDSProfile(object):
 	 	}
 	 	self.level_offset = 17
 
-	# data methods
+	# raw extractions
+	# these methods correspond closely to the structure of the medby definition
+	# but are only for expert end-users.
 
 	def header(self, parameter):
 		start = self.header_format[parameter][1]
@@ -114,13 +119,13 @@ class MEDSProfile(object):
 
 		return parse(self.raw[0][start:start+length])
 
-	def profile_metadata(self, parameter, index=0):
+	def profile_metadata(self, parameter, profileIndex=0):
 
-		# return None if index out of range
-		if index >= self.header('No_Prof'):
+		# return None if profileIndex out of range
+		if profileIndex >= self.header('No_Prof'):
 			return None
 
-		offset = self.header_offset + self.profile_meta_offset*index
+		offset = self.header_offset + self.profile_meta_offset*profileIndex
 		start = offset + self.profile_meta_format[parameter][1]
 		length = self.profile_meta_format[parameter][0]
 		parse = self.profile_meta_format[parameter][2]
@@ -166,26 +171,41 @@ class MEDSProfile(object):
 
 		return parse(self.raw[0][start:start+length])
 
-	def profile_header(self, parameter, index=0):
+	def segment_offset(self, profileIndex):
+		# helper function to return the offset in segments for the beginning of this profile
+		# corresponds to number of lines to skip in raw data
+		# raw text has one line for global header, then one line for each segment AFAIK
+
+		segmentOffset = 1
+		if profileIndex > 0:
+			for i in range(profileIndex-1):
+				segmentOffset += self.n_segments(i)
+
+		return segmentOffset
+
+	def profile_segment_header(self, parameter, profileIndex=0, segmentIndex=0):
+
+		segmentOffset = self.segment_offset(profileIndex)
 
 		# return None if index out of range
-		if index >= len(self.raw)-1:
+		if segmentOffset + segmentIndex >= len(self.raw):
 			return None
 
-		start = self.profile_header_format[parameter][1]
-		length = self.profile_header_format[parameter][0]
-		parse = self.profile_header_format[parameter][2]
+		start = self.profile_segment_header_format[parameter][1]
+		length = self.profile_segment_header_format[parameter][0]
+		parse = self.profile_segment_header_format[parameter][2]
+		return parse(self.raw[segmentIndex+segmentOffset][start:start+length])
 
-		return parse(self.raw[index+1][start:start+length])
+	def profile_segment_data(self, parameter, profileIndex=0, segmentIndex=0):
 
-	def profile_data(self, parameter, index=0):
+		segmentOffset = self.segment_offset(profileIndex)
 
 		# return None if index out of range
-		if index >= len(self.raw)-1:
+		if segmentOffset + segmentIndex >= len(self.raw):
 			return None
 
-		offset = self.profile_header_offset
-		n_levels = self.profile_header('No_Depths', index)
+		offset = self.profile_segment_header_offset
+		n_levels = self.profile_segment_header('No_Depths', profileIndex, segmentIndex)
 		depth = []
 		var = []
 
@@ -195,18 +215,68 @@ class MEDSProfile(object):
 			start = o + self.level_format['Depth_Press'][1]
 			length = self.level_format['Depth_Press'][0]
 			parse = self.level_format['Depth_Press'][2]
-			depth.append(parse(self.raw[index+1][start:start+length]))
+			depth.append(parse(self.raw[segmentIndex+segmentOffset][start:start+length]))
 
 			start = o + self.level_format[parameter][1]
 			length = self.level_format[parameter][0]
 			parse = self.level_format[parameter][2]
-			var.append(parse(self.raw[index+1][start:start+length]))
+			var.append(parse(self.raw[segmentIndex+segmentOffset][start:start+length]))
 	
 		return depth, var
 
+	# simplified data methods
+	# these methods wrap the base parsing methods with easier-to-understand names.
+	# API matches wodpy as far as possible.
 
+	def day(self):
+		return self.header('Obs_Day')
 
+	def month(self):
+		return self.header('Obs_Month')
 
+	def year(self):
+		return self.header('Obs_Year')
+
+	def time(self):
+		return self.header('Obs_Time')
+
+	def cruise(self):
+		return self.header('Cruise_ID')
+
+	def latitude(self):
+		return self.header('Latitude')
+
+	def longitude(self):
+		return self.header('Longitude')
+
+	def n_profiles(self):
+		return self.header('No_Prof')
+
+	def n_segments(self, profileIndex=0):
+		return self.profile_metadata('No_Seg', profileIndex)
+
+	def n_levels(self, profileIndex=0):
+
+		nLevels = 0
+		for i in range(self.n_segments(profileIndex)):
+			nLevels += self.profile_segment_header('No_Depths', segmentIndex=i)
+
+		return nLevels
+
+	def t(self):
+
+		# find a temperature profile, if exists
+		# return None if no temperature profile is found
+		profileIndex = None
+		for i in range(self.n_profiles()):
+			if self.profile_header('Profile_Type', i) == 'TEMP':
+				profileIndex = i
+		if profileIndex is None:
+			return None
+
+		#result = []
+		#for i in range(self.n_segments(profileIndex)):
+		#	result += self.
 
 
 
