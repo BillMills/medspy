@@ -1,13 +1,12 @@
-# marser for the MEDS format
+# parser for the MEDS format
 # MEDS described at https://www.nodc.noaa.gov/GTSPP/document/datafmt/medsfmt.html
 
 class MEDSProfile(object):
-	'''
-	text: MEDS string (one per line in data files)
-	'''
 
 	def __init__(self, text):
-
+		'''
+		text: MEDS string (one per line in data files)
+		'''
 		# header info will be in raw[0]; profiles will sit in each subsquent index.
 		self.raw = text.split('\n')
 
@@ -206,23 +205,17 @@ class MEDSProfile(object):
 
 		offset = self.profile_segment_header_offset
 		n_levels = self.profile_segment_header('No_Depths', profileIndex, segmentIndex)
-		depth = []
 		var = []
 
 		for i in range(n_levels):
 			o = offset + self.level_offset*i
-
-			start = o + self.level_format['Depth_Press'][1]
-			length = self.level_format['Depth_Press'][0]
-			parse = self.level_format['Depth_Press'][2]
-			depth.append(parse(self.raw[segmentIndex+segmentOffset][start:start+length]))
 
 			start = o + self.level_format[parameter][1]
 			length = self.level_format[parameter][0]
 			parse = self.level_format[parameter][2]
 			var.append(parse(self.raw[segmentIndex+segmentOffset][start:start+length]))
 	
-		return depth, var
+		return var
 
 	# simplified data methods
 	# these methods wrap the base parsing methods with easier-to-understand names.
@@ -263,20 +256,86 @@ class MEDSProfile(object):
 
 		return nLevels
 
-	def t(self):
+	def var(self, variable, QC=False):
+		# generic variable extraction
+		# return None if requested variable profile is found
+		# takes depths from whatever profile is first in the record
+		# QC = True returns QC flags for the specified variable, instead of the variable itself
 
-		# find a temperature profile, if exists
-		# return None if no temperature profile is found
 		profileIndex = None
-		for i in range(self.n_profiles()):
-			if self.profile_header('Profile_Type', i) == 'TEMP':
-				profileIndex = i
+		if variable == 'Depth_Press':
+			profileIndex = 0
+			if QC:
+				key = 'Depres_Q'
+			else:
+				key = 'Depth_Press'
+		else:
+			for i in range(self.n_profiles()):
+				if self.profile_segment_header('Profile_Type', i, 0) == variable:
+					profileIndex = i
+			if QC:
+				key = 'Prof_Q_Parm'
+			else:
+				key = 'Prof_Parm'
 		if profileIndex is None:
 			return None
 
-		#result = []
-		#for i in range(self.n_segments(profileIndex)):
-		#	result += self.
+		result = []
+		for i in range(self.n_segments(profileIndex)):
+			result += self.profile_segment_data(key, profileIndex, i)
+
+		return result
+
+	def t(self):
+		# temperature
+		return self.var('TEMP')
+
+	def t_QC(self):
+		# temperature QC index
+		return self.var('TEMP', True)
+
+	def z(self):
+		# depth
+		return self.var('Depth_Press')
+
+	def z_QC(self):
+		# depth QC index
+		return self.var('Depth_Press', True)
+
+
+class MEDSReader(object):
+	# take a meds-ascii file and slice it up into individual records on self.raw[].
+
+	def __init__(self, file):
+		'''
+		fid: string path to file containing meds-ascii text
+		'''
+
+		fid = open(file, 'r')
+		self.records = []
+		while True:
+			# get first line of record
+			raw = fid.readline()
+			# nothing -> done the file
+			if raw == '':
+				break
+
+			record = MEDSProfile(raw)
+			n_profiles = record.n_profiles()
+			# loop over all profiles
+			for p in range(n_profiles):
+				# get first line of p'th profile
+				raw += fid.readline()
+				record = MEDSProfile(raw)
+				n_segments = record.n_segments(p)
+				for s in range(1,n_segments):
+					# get one line for each segment (already got the first)
+					raw += fid.readline()
+			self.records.append(raw)
+
+		fid.close()
+
+
 
 
 
