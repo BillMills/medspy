@@ -101,9 +101,9 @@ class MEDSProfile(object):
 
 	 	self.level_format = {
 	 		'Depth_Press': [6,0,float],
-	 		'Depres_Q': [1,6,str],
+	 		'Depres_Q': [1,6,int],
 	 		'Prof_Parm': [9,7,float],
-	 		'Prof_Q_Parm': [1,16,str]
+	 		'Prof_Q_Parm': [1,16,int]
 	 	}
 	 	self.level_offset = 17
 
